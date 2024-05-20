@@ -1,0 +1,111 @@
+name: scrm/scrm-project/backend/coresrs
+on:
+  push:
+  workflow_dispatch:
+concurrency:
+  group: "${{ github.ref }}"
+  cancel-in-progress: true
+env:
+  PROJECT_TOKEN: "${{ secrets.PROJECT_TOKEN }}"
+  CACER: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUN5ekNDQWJPZ0F3SUJBZ0lRVjlJSnJmckx1dk1sU0xBZTBnMjY4ekFOQmdrcWhraUc5dzBCQVFzRkFEQUEKTUI0WERUSTBNRFV4TnpBM016UTBPVm9YRFRJME1EZ3hOVEEzTXpRME9Wb3dBRENDQVNJd0RRWUpLb1pJaHZjTgpBUUVCQlFBRGdnRVBBRENDQVFvQ2dnRUJBT3Y3d0FlbHZXeEFGUURvL0VoanYzeGFkaElOSjEzVkNMRzA2Mm9yCkgycWZwUFUyeTdKNi9JVm15MElINGFrS2EzRThRS3pDN2hIRVNXRVdhMVZxRWtWMzV5YjBPb25jSGdvSjhaWUsKZ1ZLbis2UWprdXoxOEQ4WlM3OFdpN2ZXMTRMZWZzcDZvTStQVG9ycXdScjhhcnpKNW9QNzZkZjRsSnRuU294dwpSTDdaVVdQLzNWN2w3YjVxUkMraS84UlJxSExkMTVXbTMzbXdLWUJCL2o3NExTSzdLa0VRUlpreUJjOUVZYWxLCm9SZGlLVUlETk9KZERuZk1OYllkQlBwRVBTQjBYakVMZXg1emJUQjdLREVTNUROOUlsRVE3Y3FLTkl0QWhwY0EKNEU4NFludUkvVG5DRmQvS0pOaXlDd0NsRDJXdE4wVENGRjBjYlhSNjZVYkt4bzBDQXdFQUFhTkJNRDh3RGdZRApWUjBQQVFIL0JBUURBZ1dnTUF3R0ExVWRFd0VCL3dRQ01BQXdId1lEVlIwUkFRSC9CQlV3RTRJUmMzRXVaR1YyCkxuTjBjMjltZEM1c1lXNHdEUVlKS29aSWh2Y05BUUVMQlFBRGdnRUJBQStJam9Hbm1FU0RYMi9LN0lsLzI3eTAKZExTZG5TOG5WWTRJZ2dobVRZcGQ4RmpYblp1V1J6T2x3NXdyS0xXejU0ekc1UkQxVGlaa3V6RjVObFNwdWVXMApKKzBLTDJPUjlubndlQ1QreGF1ejZSdS9sWGRuZGJrVGU1cEx0ZkRVaHhydnh0OUMzRGxwNlV4cXFwaGw2K0QxClV4UXo3R2FQaVhKQzk4QWQ0UkJKYnhnUlIxQ0gzdnBqWW11NUh3MHR1S2JpYjVibUd0cUs0Z2hZVVJpR3Blc0gKRDd4azJlU2pDYmIxZXRNL2Y5cU4xVGVmWmRLT3lwUVlwcFlLZng3Y0lEVTlGSEpXUWk0cUpmcnczN3JKQW5iaQpiN3Q5eEJ5UEJvY1pTZklBZTEycTdYeGEzWUlOMWs5bytsdVFrM2c3azYvSllLQmowRElKSUNsWlBFM2ZQQ3c9Ci0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K
+jobs:
+  build-image:
+    runs-on:
+      - self-hosted
+      - stsoft-ops-k8s
+    container:
+      image: gcr.io/kaniko-project/executor:v1.6.0-debug
+      options: "--entrypoint "
+    if: startsWith(github.ref, 'refs/tags')
+    timeout-minutes: 60
+    env:
+      CONTAINER_REGISTRY: cr.yandex
+      CONTAINER_REPOSITORY: crppamjfd763v1mvep5b
+      PROJECT_NAME: "${{ github.event.repository.name }}"
+    steps:
+    - uses: actions/checkout@v4.1.0
+      with:
+        fetch-depth: 20
+        lfs: true
+    - run: AUTH=$(echo -n json_key:"${RU_REGISTRY_TOKEN_YC}"| base64| tr -d \\n)
+    - run: 'echo ''{"auths": {"cr.yandex": {"auth": "''${AUTH}''"}}}'' >> /kaniko/.docker/config.json
+        '
+    - run: "/kaniko/executor --context ${{ github.workspace }} --no-push --tarPath=${{ github.event.repository.name }}.tar --destination=${CONTAINER_REGISTRY}/${CONTAINER_REPOSITORY}/${{ github.event.repository.name }}:${{ github.ref }}"
+    - uses: actions/upload-artifact@v4.1.0
+      if: success()
+      with:
+        name: "${{ github.job }}"
+        retention-days: 1
+        path: "${{ github.event.repository.name }}.tar"
+  push-to-internal:
+    needs: build-image
+    runs-on:
+      - self-hosted
+      - stsoft-ops-k8s
+    container:
+      image: gcr.io/go-containerregistry/crane:debug
+      options: "--entrypoint "
+    if: startsWith(github.ref, 'refs/tags')
+    timeout-minutes: 60
+    env:
+      CONTAINER_REGISTRY: cr.yandex
+      CONTAINER_REPOSITORY: crppamjfd763v1mvep5b
+      PROJECT_NAME: "${{ github.event.repository.name }}"
+      REGISTRY_PASSWORD: "$RU_REGISTRY_TOKEN_YC"
+    steps:
+    - uses: actions/checkout@v4.1.0
+      with:
+        fetch-depth: 20
+        lfs: true
+    - uses: actions/download-artifact@v4.1.0
+    - run: crane auth login -u json_key -p "$(echo $REGISTRY_PASSWORD)" ${CONTAINER_REGISTRY}
+    - run: crane push ${{ github.event.repository.name }}.tar ${CONTAINER_REGISTRY}/${CONTAINER_REPOSITORY}/${{ github.event.repository.name }}/${{ github.event.repository.name }}:${{ github.ref }}
+    - run: crane push ${{ github.event.repository.name }}.tar ${CONTAINER_REGISTRY}/${CONTAINER_REPOSITORY}/${{ github.event.repository.name }}/${{ github.event.repository.name }}:latest
+  deploy-dev:
+    needs: push-to-internal
+    runs-on:
+      - self-hosted
+      - stsoft-srs
+    if: # Unable to map conditional expression to GitHub Actions equivalent
+#         ${{ github.ref }} =~ /-dev$/
+    timeout-minutes: 60
+    env:
+      CONTAINER_REGISTRY: cr.yandex
+      CONTAINER_REPOSITORY: crppamjfd763v1mvep5b
+      PROJECT_NAME: "${{ github.event.repository.name }}"
+      TAG: "${{ github.ref }}"
+    steps:
+    - uses: actions/checkout@v4.1.0
+      with:
+        fetch-depth: 20
+        lfs: true
+    - uses: actions/download-artifact@v4.1.0
+    - name: Run downstream workflow
+      run: gh workflow run $WORKFLOW_FILE --repo scrm/infra/argocd-applications/argocd-dev
+      env:
+        WORKFLOW_FILE: UPDATE_ME
+        GH_TOKEN: "${{ github.token }}"
+  deploy-prod:
+    needs: push-to-internal
+    runs-on:
+      - self-hosted
+      - stsoft-srs
+    if: # Unable to map conditional expression to GitHub Actions equivalent
+#         ${{ github.ref }} =~ /-prod$/
+    timeout-minutes: 60
+    env:
+      CONTAINER_REGISTRY: cr.yandex
+      CONTAINER_REPOSITORY: crppamjfd763v1mvep5b
+      PROJECT_NAME: "${{ github.event.repository.name }}"
+      TAG: "${{ github.ref }}"
+    steps:
+    - uses: actions/checkout@v4.1.0
+      with:
+        fetch-depth: 20
+        lfs: true
+    - uses: actions/download-artifact@v4.1.0
+    - name: Run downstream workflow
+      run: gh workflow run $WORKFLOW_FILE --repo scrm/infra/argocd-applications/argocd-prod
+      env:
+        WORKFLOW_FILE: UPDATE_ME
+        GH_TOKEN: "${{ github.token }}"
